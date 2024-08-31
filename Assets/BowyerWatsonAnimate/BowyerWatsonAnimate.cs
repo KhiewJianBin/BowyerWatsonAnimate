@@ -14,29 +14,30 @@ public class BowyerWatsonAnimate : MonoBehaviour
     [SerializeField] GameObject Points;
     [SerializeField] MeshFilter Meshfilter;
 
-    Triangle superTriangle;
-    List<Triangle> triangles = new List<Triangle>();
+    List<Triangle> triangles = new();
     List<Vector3> vertices = new();
-    List<Edge> edges = new();
+    List<Edge> invalidEdges = new();
 
     //Debug
     List<Circle> circles = new List<Circle>();
-    Vector2? currentV;
+    Vector2? currentVertex;
+
+    public float AnimateStepInterval = 1;
+
     IEnumerator Start()
     {
         List<Vector3> vertices = new();
         List<Vector2> points = new();
 
-        //Step 0. Collect Vertices
         for (int i = 0; i < Points.transform.childCount; i++)
         {
             var vertex = Points.transform.GetChild(i).transform.position;
             vertices.Add(vertex);
-
             points.Add(vertex);
         }
 
-        //1. Create Super Triangle using welzl algorithm to get minimum circle
+        yield return StartCoroutine(UpdateText(Text, "1. Create SuperTriangle", AnimateStepInterval));
+
         var minCircle = SmallestCircle.Welzl(new(points));
         float step = Mathf.PI * 2 / 3;
         Vector3 center = (Vector3)minCircle.Center;
@@ -44,51 +45,56 @@ public class BowyerWatsonAnimate : MonoBehaviour
         Vector3 tp0 = center + new Vector3(Mathf.Cos(step * 0), Mathf.Sin(step * 0), 0) * radius;
         Vector3 tp1 = center + new Vector3(Mathf.Cos(step * 1), Mathf.Sin(step * 1), 0) * radius;
         Vector3 tp2 = center + new Vector3(Mathf.Cos(step * 2), Mathf.Sin(step * 2), 0) * radius;
-        superTriangle = new Triangle(tp0, tp1, tp2);
+        var superTriangle = new Triangle(tp0, tp1, tp2);
 
         triangles = new() { superTriangle };
 
-        yield return StartCoroutine(add(points[0], triangles));
-        triangles = coroutineValue;
+        yield return StartCoroutine(UpdateText(Text, "2. Add points one by one", AnimateStepInterval));
 
-        yield return StartCoroutine(add(points[1], triangles));
-        triangles = coroutineValue;
+        var animatespeed = AnimateStepInterval;
+        for (int i = 0; i < points.Count; i++)
+        {
+            var point = points[i];
 
-        yield return StartCoroutine(add(points[2], triangles));
-        triangles = coroutineValue;
+            currentVertex = point;
+            yield return StartCoroutine(addVertex(point, triangles, animatespeed));
+            currentVertex = null;
 
-        yield return StartCoroutine(add(points[3], triangles));
-        triangles = coroutineValue;
+            animatespeed *= 0.6f;
+            animatespeed = Mathf.Clamp(animatespeed,0.1f,3);
+        }
 
-        // Remove triangles that share edges with super triangle
+        yield return StartCoroutine(UpdateText(Text, "3. Removing triangles that share with SuperTriangle", AnimateStepInterval));
+
         triangles = triangles.FindAll(triangle =>
             !(triangle.v0 == superTriangle.v0 || triangle.v0 == superTriangle.v1 || triangle.v0 == superTriangle.v2 ||
             triangle.v1 == superTriangle.v0 || triangle.v1 == superTriangle.v1 || triangle.v1 == superTriangle.v2 ||
             triangle.v2 == superTriangle.v0 || triangle.v2 == superTriangle.v1 || triangle.v2 == superTriangle.v2)
         );
 
-        List<int> tri = new List<int>(triangles.Count * 3);
+        yield return StartCoroutine(UpdateText(Text, "4. Create Mesh", AnimateStepInterval));
+
+        List<int> reorderedTriangles = new List<int>(triangles.Count * 3);
         for (int i = 0; i < triangles.Count; i++)
         {
             var windingOrder = GeometryUtils.Orientation(triangles[i].v0, triangles[i].v1, triangles[i].v2);
             if (windingOrder < 0)
             {
-                tri.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v0));
-                tri.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v1));
-                tri.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v2));
+                reorderedTriangles.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v0));
+                reorderedTriangles.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v1));
+                reorderedTriangles.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v2));
             }
             else //if (windingOrder > 0)
             {
-                tri.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v2));
-                tri.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v1));
-                tri.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v0));
+                reorderedTriangles.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v2));
+                reorderedTriangles.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v1));
+                reorderedTriangles.Add(vertices.FindIndex(v => v == (Vector3)triangles[i].v0));
             }
         }
 
-        //Step 4.create the mesh
         Mesh mesh = new Mesh();
         mesh.SetVertices(vertices);
-        mesh.SetTriangles(tri, 0);
+        mesh.SetTriangles(reorderedTriangles, 0);
         Meshfilter.mesh = mesh;
 
         Text.text = "Delaunay BowyaerWatson Triangulation Triangle Count: " + triangles.Count;
@@ -96,59 +102,55 @@ public class BowyerWatsonAnimate : MonoBehaviour
         yield return null;
     }
 
-    void Update()
+    IEnumerator addVertex(Vector2 vertex, List<Triangle> intriangles, float AnimateStepInterval)
     {
-        
-    }
-
-    List<Triangle> coroutineValue = new();
-    IEnumerator add(Vector2 vertex, List<Triangle> triangles)
-    {
-        edges = new List<Edge>();
+        invalidEdges = new List<Edge>();
 
         var newTriangles = new List<Triangle>();
-        foreach (var triangle in triangles)
+        foreach (var triangle in intriangles)
         {
+            yield return StartCoroutine(UpdateText(Text, "2a. For each existing triangle create Circumcircle", AnimateStepInterval));
+
             var c = GeometryUtils.GetCircumcircle(triangle.v0, triangle.v1, triangle.v2);
             circles.Add(c);
-            currentV = vertex;
 
-            yield return new WaitForSeconds(1);
+            yield return StartCoroutine(UpdateText(Text, "2b. Is point in Circumcircle of triangle?", AnimateStepInterval));
 
             if (GeometryUtils.InsideCircumcircle(vertex, triangle.v0, triangle.v1, triangle.v2))
             {
-                edges.Add(new Edge(triangle.v0, triangle.v1));
-                edges.Add(new Edge(triangle.v1, triangle.v2));
-                edges.Add(new Edge(triangle.v2, triangle.v0));
+                yield return StartCoroutine(UpdateText(Text, "2c. Yes! Invalidate Triangle (Convert to Edges)", AnimateStepInterval));
 
-                yield return new WaitForSeconds(1);
+                invalidEdges.Add(new Edge(triangle.v0, triangle.v1));
+                invalidEdges.Add(new Edge(triangle.v1, triangle.v2));
+                invalidEdges.Add(new Edge(triangle.v2, triangle.v0));
             }
             else
             {
+                yield return StartCoroutine(UpdateText(Text, "2d. No! Check other Triangles", AnimateStepInterval));
+
                 newTriangles.Add(triangle);
             }
 
             circles.Remove(c);
-            currentV = null;
+        }
+
+        triangles = newTriangles;
+
+        yield return StartCoroutine(UpdateText(Text, "2e. Filter for Unique Edges", AnimateStepInterval));
+
+        invalidEdges = uniqueEdges(invalidEdges);
+        var e2 = new List<Edge>(invalidEdges);
+
+        yield return StartCoroutine(UpdateText(Text, "2e. Create Triangle from Unique Edges", AnimateStepInterval));
+
+        foreach (var edge in e2)
+        {
+            newTriangles.Add(new Triangle(edge.v0, edge.v1, vertex));
+            invalidEdges.Remove(edge);
         }
         triangles = newTriangles;
 
-        // Get unique edges
-        edges = uniqueEdges(edges);
-        var e2 = new List<Edge>(edges);
-
-        yield return new WaitForSeconds(1);
-
-        // Create new triangles from the unique edges and new vertex
-        foreach (var edge in e2)
-        {
-            triangles.Add(new Triangle(edge.v0, edge.v1, vertex));
-            edges.Remove(edge);
-        }
-
-        coroutineValue = triangles;
-
-        yield return new WaitForSeconds(1);
+        yield return StartCoroutine(UpdateText(Text, "2f. Finished, Add Next Point", AnimateStepInterval));
     }
 
     List<Edge> uniqueEdges(List<Edge> edges)
@@ -168,92 +170,51 @@ public class BowyerWatsonAnimate : MonoBehaviour
                     break;
                 }
             }
-             
-            if(isUnique) uniqueEdges.Add(edges[i]);
+
+            if (isUnique) uniqueEdges.Add(edges[i]);
         }
 
         return uniqueEdges;
     }
 
-
+    IEnumerator UpdateText(Text text, string value, float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        text.text = value;
+        yield return new WaitForSeconds(delay);
+    }
 
     void OnDrawGizmos()
     {
-        Gizmos.color = Color.red;
 
-        //Gizmos.DrawLine(superTriangle.v0, superTriangle.v1);
-        //Gizmos.DrawLine(superTriangle.v1, superTriangle.v2);
-        //Gizmos.DrawLine(superTriangle.v2, superTriangle.v0);
+        
 
-        foreach (var circle in circles)
-        {
-            UnityOnGizmoHelper.DrawCircle(circle.Center, circle.Radius, 100, Quaternion.identity);
-        }
-
-        Gizmos.color = Color.cyan;
+        // Resulting Triangles
+        Gizmos.color = Color.green;
         foreach (var triangle in triangles)
         {
             UnityOnGizmoHelper.DrawTriangleLine(triangle.v0, triangle.v1, triangle.v2);
         }
 
-        Gizmos.color = Color.green;
-        foreach (var triangle in coroutineValue)
-        {
-            UnityOnGizmoHelper.DrawTriangleLine(triangle.v0, triangle.v1, triangle.v2);
-        }
-
+        // Invalid Edges/Triangles
         Gizmos.color = Color.blue;
-        foreach (var edge in edges)
+        foreach (var edge in invalidEdges)
         {
             Gizmos.DrawLine(edge.v0, edge.v1);
         }
 
-        Gizmos.color = Color.white;
-        if (currentV.HasValue)
+        // Draw Current Vertex being added
+        Gizmos.color = Color.red;
+        if (currentVertex.HasValue)
         {
-            UnityOnGizmoHelper.DrawCircle(currentV.Value, 1, 100, Quaternion.identity);
-        }
-    }
-
-    struct Triangle
-    {
-        public Vector2 v0 { get; set; }
-        public Vector2 v1 { get; set; }
-        public Vector2 v2 { get; set; }
-
-        public Triangle(Vector2 v0, Vector2 v1, Vector2 v2)
-        {
-            this.v0 = v0;
-            this.v1 = v1;
-            this.v2 = v2;
-        }
-    }
-    struct Edge : IEquatable<Edge>
-    {
-        public Vector2 v0 { get; set; }
-        public Vector2 v1 { get; set; }
-
-        public Edge(Vector2 v0, Vector2 v1)
-        {
-            this.v0 = v0;
-            this.v1 = v1;
+            UnityOnGizmoHelper.DrawCircle(currentVertex.Value, 0.5f, 100, Quaternion.identity);
         }
 
-        public bool Equals(Edge other)
+        // Circumcircles
+        Gizmos.color = Color.red;
+        foreach (var circle in circles)
         {
-            return (v0 == other.v0 && v1 == other.v1) || (v0 == other.v1 && v1 == other.v0);
-        }
-
-        public override bool Equals(object obj)
-        {
-            if (obj == null || GetType() != obj.GetType())
-            {
-                return false;
-            }
-
-            Edge other = (Edge)obj;
-
-            return (v0 == other.v0 && v1 == other.v1) || (v0 == other.v1 && v1 == other.v0);
+            UnityOnGizmoHelper.DrawCircle(circle.Center, circle.Radius, 100, Quaternion.identity);
         }
     }
 }
