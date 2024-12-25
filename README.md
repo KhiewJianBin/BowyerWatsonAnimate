@@ -1,4 +1,4 @@
-# BowyerWatson Delunay n Unity C# (Animated)
+# Delunay Triangulation using BowyerWatson in Unity C# (Animated)
 The well known Bowyer Watson used for Delaunay triangulation
 Refrence : 
 
